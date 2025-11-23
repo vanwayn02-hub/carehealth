@@ -1,0 +1,233 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { base44 } from '@/api/base44Client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Send, Loader2, Plus } from 'lucide-react';
+import MessageBubble from '../components/chat/MessageBubble';
+import DisclaimerBanner from '../components/health/DisclaimerBanner';
+
+export default function Chat() {
+  const [currentConversation, setCurrentConversation] = useState(null);
+  const [inputMessage, setInputMessage] = useState('');
+  const [messages, setMessages] = useState([]);
+  const messagesEndRef = useRef(null);
+  const queryClient = useQueryClient();
+
+  const { data: conversations = [] } = useQuery({
+    queryKey: ['conversations'],
+    queryFn: () => base44.entities.ChatConversation.list('-last_message_date'),
+  });
+
+  const createConversationMutation = useMutation({
+    mutationFn: async () => {
+      const newConv = await base44.entities.ChatConversation.create({
+        title: 'New Conversation',
+        messages: [],
+        last_message_date: new Date().toISOString()
+      });
+      return newConv;
+    },
+    onSuccess: (newConv) => {
+      queryClient.invalidateQueries(['conversations']);
+      setCurrentConversation(newConv);
+      setMessages([]);
+    }
+  });
+
+  const sendMessageMutation = useMutation({
+    mutationFn: async (userMessage) => {
+      const newMessages = [
+        ...messages,
+        { role: 'user', content: userMessage, timestamp: new Date().toISOString() }
+      ];
+      setMessages(newMessages);
+      
+      // Get user profile for context
+      const profiles = await base44.entities.UserProfile.list();
+      const profile = profiles[0];
+      
+      let contextInfo = '';
+      if (profile) {
+        contextInfo = `User Profile: Age ${profile.age}, Gender: ${profile.gender}.`;
+        if (profile.allergies) contextInfo += ` Allergies: ${profile.allergies}.`;
+        if (profile.chronic_conditions) contextInfo += ` Conditions: ${profile.chronic_conditions}.`;
+      }
+
+      const systemPrompt = `You are a helpful and empathetic personal health assistant. 
+${contextInfo}
+
+IMPORTANT: 
+- Provide general health information and lifestyle advice
+- Be supportive and understanding
+- For symptoms, suggest general self-care but ALWAYS recommend seeing a doctor for proper diagnosis
+- NEVER provide specific medical diagnoses
+- Always include appropriate medical disclaimers when discussing health issues
+- Be concise but thorough
+- Use a warm, caring tone`;
+
+      const conversationHistory = newMessages.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+      
+      const response = await base44.integrations.Core.InvokeLLM({
+        prompt: `${systemPrompt}
+
+Conversation history:
+${conversationHistory}
+
+Respond to the user's latest message. Be helpful, empathetic, and always prioritize safety.`
+      });
+
+      const assistantMessage = {
+        role: 'assistant',
+        content: response + '\n\n**⚠️ Remember**: This is general information only. For specific medical advice, diagnosis, or treatment, please consult a qualified healthcare professional.',
+        timestamp: new Date().toISOString()
+      };
+
+      const finalMessages = [...newMessages, assistantMessage];
+      
+      await base44.entities.ChatConversation.update(currentConversation.id, {
+        messages: finalMessages,
+        last_message_date: new Date().toISOString(),
+        title: newMessages[0]?.content.substring(0, 50) || 'New Conversation'
+      });
+
+      return finalMessages;
+    },
+    onSuccess: (finalMessages) => {
+      setMessages(finalMessages);
+      queryClient.invalidateQueries(['conversations']);
+    }
+  });
+
+  useEffect(() => {
+    if (conversations.length > 0 && !currentConversation) {
+      setCurrentConversation(conversations[0]);
+      setMessages(conversations[0].messages || []);
+    }
+  }, [conversations]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSend = () => {
+    if (!inputMessage.trim() || sendMessageMutation.isPending) return;
+    
+    if (!currentConversation) {
+      createConversationMutation.mutate();
+      setTimeout(() => {
+        sendMessageMutation.mutate(inputMessage.trim());
+      }, 500);
+    } else {
+      sendMessageMutation.mutate(inputMessage.trim());
+    }
+    
+    setInputMessage('');
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  return (
+    <div className="h-screen bg-gradient-to-br from-teal-50 via-blue-50 to-purple-50 flex flex-col">
+      <div className="max-w-4xl mx-auto w-full flex-1 flex flex-col p-6">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-3xl font-bold text-gray-900">AI Health Assistant</h1>
+            <Button
+              onClick={() => createConversationMutation.mutate()}
+              className="bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              New Chat
+            </Button>
+          </div>
+          <DisclaimerBanner />
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto mb-4 space-y-4 scroll-smooth">
+          {messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center max-w-md">
+                <div className="h-20 w-20 rounded-full bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center mx-auto mb-4">
+                  <Send className="w-10 h-10 text-white" />
+                </div>
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">How can I help you today?</h2>
+                <p className="text-gray-600 mb-6">Ask me about health advice, medication management, fitness tips, or mental wellness.</p>
+                <div className="grid grid-cols-1 gap-2 text-left">
+                  {[
+                    'How can I improve my sleep quality?',
+                    'What are some healthy breakfast ideas?',
+                    'Tips for managing stress and anxiety',
+                    'How to start a fitness routine?'
+                  ].map((suggestion, idx) => (
+                    <Button
+                      key={idx}
+                      variant="outline"
+                      className="justify-start text-left hover:bg-teal-50"
+                      onClick={() => setInputMessage(suggestion)}
+                    >
+                      {suggestion}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {messages.map((msg, idx) => (
+                <MessageBubble key={idx} message={msg} />
+              ))}
+              {sendMessageMutation.isPending && (
+                <div className="flex gap-3 justify-start">
+                  <div className="h-9 w-9 rounded-full bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center">
+                    <Loader2 className="w-5 h-5 text-white animate-spin" />
+                  </div>
+                  <div className="bg-white rounded-2xl px-4 py-3 border border-gray-200">
+                    <div className="flex gap-1">
+                      <div className="h-2 w-2 bg-gray-400 rounded-full animate-bounce" />
+                      <div className="h-2 w-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                      <div className="h-2 w-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </>
+          )}
+        </div>
+
+        {/* Input */}
+        <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-4">
+          <div className="flex gap-3">
+            <Textarea
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type your health question here..."
+              className="resize-none border-0 focus-visible:ring-0 min-h-[60px]"
+              disabled={sendMessageMutation.isPending}
+            />
+            <Button
+              onClick={handleSend}
+              disabled={!inputMessage.trim() || sendMessageMutation.isPending}
+              className="bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600 h-[60px]"
+            >
+              {sendMessageMutation.isPending ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
