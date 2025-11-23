@@ -1,0 +1,279 @@
+import React, { useState } from 'react';
+import { base44 } from '@/api/base44Client';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Button } from "@/components/ui/button";
+import { Plus, Search } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import HealthLogCard from '../components/health/HealthLogCard';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+
+export default function HealthJournal() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showDialog, setShowDialog] = useState(false);
+  const [formData, setFormData] = useState({
+    date: new Date().toISOString().split('T')[0],
+    category: 'general',
+    title: '',
+    description: '',
+    severity: 'low'
+  });
+  const [selectedLog, setSelectedLog] = useState(null);
+
+  const queryClient = useQueryClient();
+
+  const { data: logs = [], isLoading } = useQuery({
+    queryKey: ['healthLogs'],
+    queryFn: () => base44.entities.HealthLog.list('-date'),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data) => {
+      let aiRecommendation = '';
+      
+      if (data.category === 'symptom' && data.description) {
+        const response = await base44.integrations.Core.InvokeLLM({
+          prompt: `As a health advisor, provide brief, general recommendations for someone experiencing: "${data.title}" - ${data.description}. 
+          
+Keep it under 100 words. Focus on:
+1. General self-care tips
+2. When to see a doctor
+3. Lifestyle adjustments
+
+IMPORTANT: End with a clear disclaimer to consult a healthcare professional.`
+        });
+        aiRecommendation = response;
+      }
+      
+      return base44.entities.HealthLog.create({
+        ...data,
+        ai_recommendation: aiRecommendation
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['healthLogs']);
+      setShowDialog(false);
+      resetForm();
+    }
+  });
+
+  const resetForm = () => {
+    setFormData({
+      date: new Date().toISOString().split('T')[0],
+      category: 'general',
+      title: '',
+      description: '',
+      severity: 'low'
+    });
+  };
+
+  const handleSave = () => {
+    createMutation.mutate(formData);
+  };
+
+  const filteredLogs = logs.filter(log =>
+    log.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    log.description?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-blue-50 to-purple-50">
+      <div className="max-w-6xl mx-auto p-6 pb-20">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Health Journal</h1>
+          <p className="text-gray-600">Track symptoms, consultations, and wellness activities</p>
+        </div>
+
+        <div className="flex gap-4 mb-6">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <Input
+              placeholder="Search journal entries..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 bg-white border-2 border-gray-200"
+            />
+          </div>
+          <Button
+            onClick={() => {
+              resetForm();
+              setShowDialog(true);
+            }}
+            className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            New Entry
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <div className="text-center py-12">
+            <div className="h-12 w-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          </div>
+        ) : filteredLogs.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-xl border-2 border-gray-200">
+            <div className="h-16 w-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+              <Plus className="w-8 h-8 text-gray-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No journal entries yet</h3>
+            <p className="text-gray-600 mb-4">Start tracking your health journey</p>
+            <Button
+              onClick={() => {
+                resetForm();
+                setShowDialog(true);
+              }}
+              className="bg-gradient-to-r from-purple-500 to-pink-500"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              New Entry
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredLogs.map(log => (
+              <HealthLogCard
+                key={log.id}
+                log={log}
+                onClick={() => setSelectedLog(log)}
+              />
+            ))}
+          </div>
+        )}
+
+        <Dialog open={showDialog} onOpenChange={setShowDialog}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>New Health Journal Entry</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Date *</Label>
+                  <Input
+                    type="date"
+                    value={formData.date}
+                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Category *</Label>
+                  <Select
+                    value={formData.category}
+                    onValueChange={(value) => setFormData({ ...formData, category: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="symptom">Symptom</SelectItem>
+                      <SelectItem value="consultation">Consultation</SelectItem>
+                      <SelectItem value="fitness">Fitness</SelectItem>
+                      <SelectItem value="mental_health">Mental Health</SelectItem>
+                      <SelectItem value="nutrition">Nutrition</SelectItem>
+                      <SelectItem value="general">General</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Title *</Label>
+                <Input
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  placeholder="Brief title for this entry"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Detailed description..."
+                  rows={4}
+                />
+              </div>
+
+              {formData.category === 'symptom' && (
+                <div className="space-y-2">
+                  <Label>Severity</Label>
+                  <Select
+                    value={formData.severity}
+                    onValueChange={(value) => setFormData({ ...formData, severity: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="moderate">Moderate</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-end pt-4">
+                <Button variant="outline" onClick={() => setShowDialog(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSave}
+                  disabled={!formData.title || createMutation.isPending}
+                  className="bg-gradient-to-r from-purple-500 to-pink-500"
+                >
+                  {createMutation.isPending ? 'Saving...' : 'Save Entry'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{selectedLog?.title}</DialogTitle>
+            </DialogHeader>
+            {selectedLog && (
+              <div className="space-y-4">
+                <div className="flex gap-4 text-sm text-gray-600">
+                  <span>{new Date(selectedLog.date).toLocaleDateString()}</span>
+                  <span>•</span>
+                  <span className="capitalize">{selectedLog.category.replace('_', ' ')}</span>
+                  {selectedLog.severity && (
+                    <>
+                      <span>•</span>
+                      <span className="capitalize">{selectedLog.severity}</span>
+                    </>
+                  )}
+                </div>
+                
+                {selectedLog.description && (
+                  <div>
+                    <h3 className="font-semibold mb-2">Description</h3>
+                    <p className="text-gray-700">{selectedLog.description}</p>
+                  </div>
+                )}
+                
+                {selectedLog.ai_recommendation && (
+                  <div className="bg-teal-50 rounded-lg p-4 border border-teal-200">
+                    <h3 className="font-semibold text-teal-900 mb-2">AI Recommendation</h3>
+                    <p className="text-sm text-teal-900">{selectedLog.ai_recommendation}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}
