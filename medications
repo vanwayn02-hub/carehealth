@@ -1,0 +1,254 @@
+import React, { useState } from 'react';
+import { base44 } from '@/api/base44Client';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Button } from "@/components/ui/button";
+import { Plus, Search } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import MedicationCard from '../components/medications/MedicationCard';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+
+export default function Medications() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showDialog, setShowDialog] = useState(false);
+  const [editingMed, setEditingMed] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    dosage: '',
+    frequency: 'once_daily',
+    time_of_day: ['08:00'],
+    start_date: new Date().toISOString().split('T')[0],
+    notes: '',
+    active: true,
+    reminder_enabled: true
+  });
+
+  const queryClient = useQueryClient();
+
+  const { data: medications = [], isLoading } = useQuery({
+    queryKey: ['medications'],
+    queryFn: () => base44.entities.Medication.list('-created_date'),
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (data) => {
+      if (editingMed) {
+        return base44.entities.Medication.update(editingMed.id, data);
+      }
+      return base44.entities.Medication.create(data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['medications']);
+      setShowDialog(false);
+      resetForm();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Medication.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['medications'])
+  });
+
+  const toggleReminderMutation = useMutation({
+    mutationFn: ({ id, reminder_enabled }) => 
+      base44.entities.Medication.update(id, { reminder_enabled: !reminder_enabled }),
+    onSuccess: () => queryClient.invalidateQueries(['medications'])
+  });
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      dosage: '',
+      frequency: 'once_daily',
+      time_of_day: ['08:00'],
+      start_date: new Date().toISOString().split('T')[0],
+      notes: '',
+      active: true,
+      reminder_enabled: true
+    });
+    setEditingMed(null);
+  };
+
+  const handleEdit = (med) => {
+    setEditingMed(med);
+    setFormData(med);
+    setShowDialog(true);
+  };
+
+  const handleSave = () => {
+    saveMutation.mutate(formData);
+  };
+
+  const filteredMedications = medications.filter(med =>
+    med.name?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-blue-50 to-purple-50">
+      <div className="max-w-6xl mx-auto p-6 pb-20">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">My Medications</h1>
+          <p className="text-gray-600">Manage your prescriptions and set reminders</p>
+        </div>
+
+        <div className="flex gap-4 mb-6">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <Input
+              placeholder="Search medications..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 bg-white border-2 border-gray-200"
+            />
+          </div>
+          <Button
+            onClick={() => {
+              resetForm();
+              setShowDialog(true);
+            }}
+            className="bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Add Medication
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <div className="text-center py-12">
+            <div className="h-12 w-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          </div>
+        ) : filteredMedications.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-xl border-2 border-gray-200">
+            <div className="h-16 w-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+              <Plus className="w-8 h-8 text-gray-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No medications yet</h3>
+            <p className="text-gray-600 mb-4">Start by adding your first medication</p>
+            <Button
+              onClick={() => {
+                resetForm();
+                setShowDialog(true);
+              }}
+              className="bg-gradient-to-r from-teal-500 to-blue-500"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add Medication
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredMedications.map(med => (
+              <MedicationCard
+                key={med.id}
+                medication={med}
+                onEdit={handleEdit}
+                onDelete={(m) => deleteMutation.mutate(m.id)}
+                onToggleReminder={(m) => toggleReminderMutation.mutate({ id: m.id, reminder_enabled: m.reminder_enabled })}
+              />
+            ))}
+          </div>
+        )}
+
+        <Dialog open={showDialog} onOpenChange={setShowDialog}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{editingMed ? 'Edit Medication' : 'Add New Medication'}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Medication Name *</Label>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="e.g., Aspirin"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Dosage *</Label>
+                  <Input
+                    value={formData.dosage}
+                    onChange={(e) => setFormData({ ...formData, dosage: e.target.value })}
+                    placeholder="e.g., 100mg"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Frequency *</Label>
+                  <Select
+                    value={formData.frequency}
+                    onValueChange={(value) => setFormData({ ...formData, frequency: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="once_daily">Once Daily</SelectItem>
+                      <SelectItem value="twice_daily">Twice Daily</SelectItem>
+                      <SelectItem value="three_times_daily">Three Times Daily</SelectItem>
+                      <SelectItem value="as_needed">As Needed</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Start Date</Label>
+                  <Input
+                    type="date"
+                    value={formData.start_date}
+                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Times of Day</Label>
+                <Input
+                  value={formData.time_of_day?.join(', ')}
+                  onChange={(e) => setFormData({ 
+                    ...formData, 
+                    time_of_day: e.target.value.split(',').map(t => t.trim()) 
+                  })}
+                  placeholder="e.g., 08:00, 20:00"
+                />
+                <p className="text-xs text-gray-500">Separate multiple times with commas</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <Textarea
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Special instructions..."
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end pt-4">
+                <Button variant="outline" onClick={() => setShowDialog(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSave}
+                  disabled={!formData.name || !formData.dosage || saveMutation.isPending}
+                  className="bg-gradient-to-r from-teal-500 to-blue-500"
+                >
+                  {saveMutation.isPending ? 'Saving...' : editingMed ? 'Update' : 'Add'} Medication
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}
