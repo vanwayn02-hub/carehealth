@@ -1,0 +1,142 @@
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from './utils';
+import { Home, MessageCircle, Pill, FileText, User, Heart, Menu, X, LogOut } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { base44 } from '@/api/base44Client';
+import { cn } from "@/lib/utils";
+
+export default function Layout({ children, currentPageName }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  const navigation = [
+    { name: 'Home', href: createPageUrl('Home'), icon: Home },
+    { name: 'Chat', href: createPageUrl('Chat'), icon: MessageCircle },
+    { name: 'Medications', href: createPageUrl('Medications'), icon: Pill },
+    { name: 'HealthJournal', href: createPageUrl('HealthJournal'), icon: FileText },
+    { name: 'Profile', href: createPageUrl('Profile'), icon: User },
+  ];
+
+  const handleLogout = async () => {
+    await base44.auth.logout();
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-blue-50 to-purple-50">
+      {/* Desktop Navigation */}
+      <nav className="hidden md:block bg-white/80 backdrop-blur-lg border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center">
+                <Heart className="w-6 h-6 text-white" />
+              </div>
+              <span className="text-xl font-bold bg-gradient-to-r from-teal-600 to-blue-600 bg-clip-text text-transparent">
+                HealthAssist
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {navigation.map((item) => {
+                const isActive = currentPageName === item.name;
+                return (
+                  <Link key={item.name} to={item.href}>
+                    <Button
+                      variant={isActive ? "default" : "ghost"}
+                      className={cn(
+                        "gap-2",
+                        isActive && "bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600"
+                      )}
+                    >
+                      <item.icon className="w-4 h-4" />
+                      {item.name === 'HealthJournal' ? 'Journal' : item.name}
+                    </Button>
+                  </Link>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-3">
+              {user && (
+                <div className="text-sm text-gray-600">
+                  {user.full_name}
+                </div>
+              )}
+              <Button variant="ghost" size="icon" onClick={handleLogout}>
+                <LogOut className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Mobile Navigation */}
+      <nav className="md:hidden bg-white/80 backdrop-blur-lg border-b border-gray-200 sticky top-0 z-50">
+        <div className="px-4">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center">
+                <Heart className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-lg font-bold bg-gradient-to-r from-teal-600 to-blue-600 bg-clip-text text-transparent">
+                HealthAssist
+              </span>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </Button>
+          </div>
+        </div>
+
+        {mobileMenuOpen && (
+          <div className="border-t border-gray-200 bg-white">
+            <div className="px-4 py-3 space-y-1">
+              {navigation.map((item) => {
+                const isActive = currentPageName === item.name;
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <Button
+                      variant={isActive ? "default" : "ghost"}
+                      className={cn(
+                        "w-full justify-start gap-3",
+                        isActive && "bg-gradient-to-r from-teal-500 to-blue-500"
+                      )}
+                    >
+                      <item.icon className="w-5 h-5" />
+                      {item.name === 'HealthJournal' ? 'Journal' : item.name}
+                    </Button>
+                  </Link>
+                );
+              })}
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-3 text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={handleLogout}
+              >
+                <LogOut className="w-5 h-5" />
+                Logout
+              </Button>
+            </div>
+          </div>
+        )}
+      </nav>
+
+      {/* Page Content */}
+      <main>{children}</main>
+    </div>
+  );
+}
